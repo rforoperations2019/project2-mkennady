@@ -14,6 +14,7 @@ library(leaflet)
 library(geojsonio)
 library(datasets)
 library(lubridate)
+library(scales)
 
 GA.data <- read_csv("data/GAdata_week.csv")
 
@@ -38,13 +39,14 @@ header <- dashboardHeader(title = "NAAEE Web Analytics")
 # Define UI for application
 sidebar <- dashboardSidebar(
   sidebarMenu(
-    menuItem("Sources", tabName = "map", icon = icon("osi")),
+    menuItem("Map", tabName = "map", icon = icon("map")),
     menuItem("Pageviews", tabName = "pageviews", icon = icon("chart-bar")),
-    menuItem("Pages", tabName = "pages", icon = icon("osi")),
+    menuItem("Sources", tabName = "sources", icon = icon("arrows-alt-h")),
+    menuItem("Pages", tabName = "pages", icon = icon("file")),
     dateRangeInput("date", 
                    label = "Date range",
-                   start = as.Date("2019-09-01"), end = as.Date("2019-09-10"),
-                   min = as.Date("2019-09-01"), max = as.Date("2019-09-30") ,
+                   start = as.Date("2019-09-01"), end = as.Date("2019-09-08"),
+                   min = as.Date("2019-09-01"), max = as.Date("2019-09-08") ,
                    format = "mm-dd-yyyy", startview = 'month'),
     textInput("text",
               label = "URL search",
@@ -64,12 +66,18 @@ body <- dashboardBody(
           ),
     tabItem(tabName = "pageviews",
             fluidRow(
-              leafletOutput("USmap")
+              
+            )
+    ),
+    tabItem(tabName = "sources",
+            fluidRow(
+              box(width = 9, plotlyOutput(outputId = "sourcesBar"))
             )
     ),
     tabItem(tabName = "pages",
             fluidRow(
-              box(title = "Page Information Table", DT::dataTableOutput(outputId = "datatable"), width = 6)
+              box(title = "Webpage Information Table", 
+                  DT::dataTableOutput(outputId = "datatable"), width = 6)
             )
           )
         )
@@ -77,19 +85,42 @@ body <- dashboardBody(
 
 ui <- dashboardPage(header, sidebar, body, skin = "green")
 
-# Define server logic required to draw a histogram
+# Define server
 server <- function(input, output) {
   
+  # observe({
+  #   if (str_detect(GA.data$pagePath, tolower(input$text), negate=FALSE) == TRUE) {
+  #     return(NULL)
+  #   } else {
+  #     return("naaee")
+  #   }
+  # })
+  
+  # input$text <- reactive({
+  #   if (str_detect(GA.data$pagePath, tolower(input$text), negate=FALSE) == TRUE) {
+  #     return(input$text)
+  #   } else {
+  #     return("naaee")
+  #   }
+  # })
+  
   GAdata <- reactive({
-    req(input$date, input$text)
+    #req(input$date, input$text)
+    
+    shiny::validate(
+      need(str_detect(GA.data$pagePath, tolower(input$text), negate=FALSE) == TRUE , "Please type something in the text box")
+    )
+
+    shiny::validate(need(
+      input$text != "", "Please type something in the text box"
+    ))
+    
     subset(GA.data, GA.data$date >= input$date[1] &
              GA.data$date <= input$date[2] &
              (str_detect(GA.data$pagePath, tolower(input$text), negate=FALSE) == TRUE))
   })
   
   GAdata.pageviews <- reactive ({
-    req(input$date, input$text)
-    
     # data.pageviews <- subset(GA.data, GA.data$date >= input$date[1] &
     #                                   GA.data$date <= input$date[2] &
     #                                   (str_detect(GA.data$pagePath, tolower(input$text), negate=FALSE) == TRUE))
@@ -105,7 +136,8 @@ server <- function(input, output) {
     
     return(US.cities)
   })
-
+# Download button
+  
   # output$download <- downloadHandler(
   #   filename = function() {
   #     paste('NAAEE_WebsiteData.csv')
@@ -116,7 +148,7 @@ server <- function(input, output) {
   # )
   
   output$USmap <- renderLeaflet({
-
+    
     geo.states <- states
 
     geo.states <- subset(geo.states, name != "Puerto Rico")
@@ -129,12 +161,17 @@ server <- function(input, output) {
     geo.states@data <- left_join(geo.states@data, GAstate)
 
     pal <- colorBin(palette = "Oranges",
-                    bins = c(0,
-                             round((max(geo.states$pageviews, na.rm = TRUE) + 1) / 5, 0),
-                             round((2 * max(geo.states$pageviews, na.rm = TRUE) + 1) / 5, 0),
-                             round((3 * max(geo.states$pageviews, na.rm = TRUE) + 1) / 5, 0),
-                             round((4 * max(geo.states$pageviews, na.rm = TRUE) + 1) / 5, 0),
-                             max(geo.states$pageviews, na.rm = TRUE) + 1),
+                    bins = 
+                      if(max(geo.states$pageviews, na.rm = TRUE) > 20) {
+                      c(0,
+                        round((max(geo.states$pageviews, na.rm = TRUE) + 1) / 5, 0),
+                        round((2 * max(geo.states$pageviews, na.rm = TRUE) + 1) / 5, 0),
+                        round((3 * max(geo.states$pageviews, na.rm = TRUE) + 1) / 5, 0),
+                        round((4 * max(geo.states$pageviews, na.rm = TRUE) + 1) / 5, 0),
+                        max(geo.states$pageviews, na.rm = TRUE) + 1)
+                    } else {
+                      c(0, 5, 10, 15, 20)
+                    },
                     domain = geo.states$pageviews)
 
     return(
@@ -146,7 +183,8 @@ server <- function(input, output) {
                     color = "black",
                     fillOpacity = 0.75,
                     popup = ~paste0("<b>", name, "</b> ",
-                                    "<br>Pageviews: ", format(pageviews, big.mark = "," ))) %>%
+                                    "<br>Pageviews: ",
+                                      format(pageviews, big.mark = "," ))) %>%
         addLegend(position = "bottomright",
                   pal = pal,
                   values = ~pageviews,
@@ -158,6 +196,8 @@ server <- function(input, output) {
   
   
   observe({
+    #necessary? req(input$date, input$text)
+    
     city.data <- GAdata.pageviews()
 
     if (input$showCities) {
@@ -174,6 +214,36 @@ server <- function(input, output) {
         clearMarkers() %>%
         mapOptions(zoomToLimits = "first")
     }
+  })
+  
+  output$sourcesBar <- renderPlotly({
+    
+    bar.data <- GAdata()
+    
+    bar.data <- aggregate(list(bar.data$pageviews, bar.data$users), by = list(bar.data$source), sum)
+    colnames(bar.data) <- c("source", "pageviews" ,"users")
+    
+    # Top 10 sources by number of users
+    bar.data <- top_n(bar.data, 10, users)
+    ggplotly(
+      ggplot(data=bar.data, aes(x=reorder(source, users), y=users)) +
+        geom_bar(stat="identity", fill="olivedrab3") +
+        coord_flip() +
+        labs(x ="Source", 
+             y = "Number of Users") + 
+        theme(axis.title = element_text(color="deepskyblue4", size=16, face="bold"),
+              axis.text = element_text(face = "bold", size = 12),
+              axis.text.x = element_text(angle = 15),
+              axis.ticks = element_blank(),
+              panel.background = element_rect(fill = "white"),
+              panel.grid.major.x = element_line(colour = "gray60"),
+              panel.grid.major.y = element_line(colour = "white"),
+              panel.grid.minor = element_line(colour = "white", 
+                                              linetype = "dashed")) + 
+        scale_y_continuous(labels = comma, 
+                           breaks = seq(0, max(bar.data$users), signif(max(bar.data$users), digits = 1) / 10))
+    )
+
   })
 
   output$datatable <-
